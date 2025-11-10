@@ -1,15 +1,16 @@
 {
-  "name": "pcd-viewer",
-  "displayName": "pcd-viewer",
+  "name": "wind-pcd-viewer",
+  "displayName": "wind-pcd-viewer",
   "description": "an extension to preview pcd file in vscode.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "engines": {
     "vscode": "^1.57.0"
   },
   "publisher": "windzu",
+  "icon": "icon.ico",
   "author": {
     "name": "windzu",
-    "email": "784227504@qq.com"
+    "email": "windzu1@gmail.com"
   },
   "homepage": "https://github.com/windzu/vscode-pcd-viewer#readme",
   "repository": {
@@ -67,7 +68,7 @@
     "eslint": "^7.19.0",
     "glob": "^7.1.6",
     "mocha": "^8.2.1",
-    "typescript": "^4.1.3",
+    "typescript": "^4.9.5",
     "vscode-test": "^1.5.0"
   },
   "dependencies": {
