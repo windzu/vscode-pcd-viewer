@@ -261,7 +261,7 @@ function generateCloudColorByField(cloud, colorField) {
     let size = cloud.header.width * cloud.header.height;
     if (colorField < 0) colorField = 0;
     if (colorField >= cloud.header.fields.length) colorField = cloud.header.fields.length - 1;
-    
+
     // Single pass to find min/max
     let max = -Infinity;
     let min = Infinity;
@@ -270,12 +270,12 @@ function generateCloudColorByField(cloud, colorField) {
         if (v > max) max = v;
         if (v < min) min = v;
     }
-    
+
     // Second pass to compute colors using pre-computed LUT
     const range = max - min;
     const colors = new Float32Array(size * 3);
     const invRange = range !== 0 ? 255 / range : 0;
-    
+
     for (let i = 0; i < size; i++) {
         let index = Math.floor((cloud.points[i][colorField] - min) * invRange);
         if (index < 0) index = 0;
