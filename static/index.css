@@ -189,6 +189,57 @@ canvas {
     z-index: 1;
 }
 
+#info-panel {
+    position: fixed;
+    left: 16px;
+    top: 80px;
+    width: 320px;
+    max-height: calc(100vh - 112px);
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    box-sizing: border-box;
+    background-color: rgba(var(--color), 0.18);
+    border: 1px solid rgba(var(--color), 0.3);
+    border-radius: 6px;
+    color: rgb(var(--color));
+    z-index: 1;
+}
+
+#info-panel .panel-header {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 8px;
+    color: rgb(var(--highlight));
+}
+
+#info-panel .panel-body {
+    overflow-y: auto;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+#info-panel .panel-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    line-height: 1.4;
+}
+
+#info-panel .panel-row .field {
+    font-weight: 600;
+    color: rgb(var(--highlight));
+    white-space: nowrap;
+}
+
+#info-panel .panel-row .value {
+    text-align: right;
+    word-break: break-word;
+    font-family: monospace;
+}
+
 #selection-panel .panel-header {
     font-weight: 600;
     font-size: 15px;
