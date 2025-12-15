@@ -121,6 +121,92 @@ function addTooltip(element, desc, position) {
 
 let cloud = null;
 let colorField = -1;
+let fileSize = 0;
+
+// Info panel elements
+const infoPanel = document.getElementById('info-panel');
+const infoPanelBody = infoPanel ? infoPanel.querySelector('.panel-body') : null;
+let infoToggle = null;
+
+function formatFileSize(bytes) {
+    const mb = bytes / (1024 * 1024);
+    return mb.toFixed(3) + ' MB';
+}
+
+function toggleInfoPanel() {
+    if (!infoPanel) return;
+    const isVisible = infoPanel.style.display !== 'none';
+    infoPanel.style.display = isVisible ? 'none' : 'flex';
+    if (infoToggle) {
+        infoToggle.className = isVisible ? 'text' : 'text current';
+    }
+    if (!isVisible) {
+        refreshInfoPanel();
+    }
+}
+
+function refreshInfoPanel() {
+    if (!infoPanelBody) return;
+    infoPanelBody.innerHTML = '';
+
+    const infoItems = [];
+
+    // File size
+    infoItems.push({ field: 'File Size', value: formatFileSize(fileSize) });
+
+    if (cloud && cloud.header) {
+        const h = cloud.header;
+
+        // Version
+        if (h.version) {
+            infoItems.push({ field: 'Version', value: h.version.toString() });
+        }
+
+        // Points count
+        const pointCount = h.width * h.height;
+        infoItems.push({ field: 'Points', value: pointCount.toLocaleString() });
+
+        // Width x Height
+        infoItems.push({ field: 'Width × Height', value: `${h.width} × ${h.height}` });
+
+        // Fields
+        if (h.fields && h.fields.length > 0) {
+            infoItems.push({ field: 'Fields', value: h.fields.join(', ') });
+        }
+
+        // Data format
+        if (h.data) {
+            infoItems.push({ field: 'Data Format', value: h.data });
+        }
+
+        // Type and Size info
+        if (h.type && h.size) {
+            const typeInfo = h.fields.map((f, i) => `${f}(${h.type[i]}${h.size[i] * 8})`).join(', ');
+            infoItems.push({ field: 'Field Types', value: typeInfo });
+        }
+
+        // Viewpoint
+        if (h.viewpoint && h.viewpoint.length > 0) {
+            infoItems.push({ field: 'Viewpoint', value: h.viewpoint.join(' ') });
+        }
+    } else {
+        infoItems.push({ field: 'Status', value: 'No point cloud loaded' });
+    }
+
+    for (const item of infoItems) {
+        const row = document.createElement('div');
+        row.className = 'panel-row';
+        const field = document.createElement('div');
+        field.className = 'field';
+        field.textContent = item.field;
+        const value = document.createElement('div');
+        value.className = 'value';
+        value.textContent = item.value;
+        row.appendChild(field);
+        row.appendChild(value);
+        infoPanelBody.appendChild(row);
+    }
+}
 
 function generateCloudPosition(cloud) {
     if (cloud == null) return null;
@@ -506,6 +592,16 @@ let menuContent = document.getElementById('menu-list');
     addTooltip(selectionToggle, 'toggle point selection mode', 'bottom');
     menuContent.appendChild(selectionToggle);
 
+    infoToggle = document.createElement('div');
+    infoToggle.innerText = 'Info';
+    infoToggle.className = 'text';
+    infoToggle.style.width = 'unset';
+    infoToggle.addEventListener('click', () => {
+        toggleInfoPanel();
+    });
+    addTooltip(infoToggle, 'show point cloud info', 'bottom');
+    menuContent.appendChild(infoToggle);
+
     zero.className = 'current';
 }
 
@@ -597,6 +693,7 @@ window.addEventListener('message', async e => {
     if (type != 'init') {
         return;
     }
+    fileSize = body.fileSize || 0;
     cloud = parse(body.value.buffer);
     clearSelection();
     geometry.setAttribute('position', generateCloudPosition(cloud));

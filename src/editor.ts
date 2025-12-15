@@ -157,7 +157,8 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                     value: [[color.r, color.g, color.b], front]
                 });
                 this.postMessage(webviewPanel, 'init', {
-                    value: document.documentData
+                    value: document.documentData,
+                    fileSize: document.documentData.byteLength
                 });
                 // if (document.uri.scheme === 'untitled') {
                 //     this.postMessage(webviewPanel, 'init', {
@@ -249,6 +250,10 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                 <div id="selection-panel">
                     <div class="panel-header">Selection</div>
                     <div class="panel-body empty">No point selected</div>
+                </div>
+                <div id="info-panel" style="display: none;">
+                    <div class="panel-header">Point Cloud Info</div>
+                    <div class="panel-body"></div>
                 </div>
                 <script nonce="${nonce}" src="${scriptUri}" type="module"></script>
             </body>
