@@ -259,26 +259,31 @@ function generateCloudColorByField(cloud, colorField) {
         return generateCloudColorByRGBA(cloud, colorField);
     }
     let size = cloud.header.width * cloud.header.height;
-    let values = [];
     if (colorField < 0) colorField = 0;
     if (colorField >= cloud.header.fields.length) colorField = cloud.header.fields.length - 1;
-    for (let i = 0; i < size; i++) {
-        values.push(cloud.points[i][colorField]);
-    }
+    
+    // Single pass to find min/max
     let max = -Infinity;
     let min = Infinity;
-    for (let i of values) {
-        if (max < i) max = i;
-        if (min > i) min = i;
-    }
-    let colors = new Float32Array(size * 3);
     for (let i = 0; i < size; i++) {
-        let index = Math.floor((values[i] - min) / (max - min) * 255);
-        if (!isFinite(index)) index = 0;
-        let data = colormapCtx.getImageData(index, 5, 1, 1).data;
-        colors[i * 3 + 0] = data[0] / 255.0;
-        colors[i * 3 + 1] = data[1] / 255.0;
-        colors[i * 3 + 2] = data[2] / 255.0;
+        const v = cloud.points[i][colorField];
+        if (v > max) max = v;
+        if (v < min) min = v;
+    }
+    
+    // Second pass to compute colors using pre-computed LUT
+    const range = max - min;
+    const colors = new Float32Array(size * 3);
+    const invRange = range !== 0 ? 255 / range : 0;
+    
+    for (let i = 0; i < size; i++) {
+        let index = Math.floor((cloud.points[i][colorField] - min) * invRange);
+        if (index < 0) index = 0;
+        if (index > 255) index = 255;
+        // Use pre-computed LUT instead of getImageData
+        colors[i * 3 + 0] = colormapLUT[index * 3 + 0] / 255.0;
+        colors[i * 3 + 1] = colormapLUT[index * 3 + 1] / 255.0;
+        colors[i * 3 + 2] = colormapLUT[index * 3 + 2] / 255.0;
     }
     return new THREE.BufferAttribute(colors, 3);
 }
@@ -435,6 +440,18 @@ function selectFieldColor(event) {
 
 let colormapCtx = document.getElementById('colormap').getContext('2d');
 
+// Pre-computed colormap lookup table (256 colors * 3 channels)
+let colormapLUT = new Uint8Array(256 * 3);
+
+function updateColormapLUT() {
+    const imageData = colormapCtx.getImageData(0, 5, 256, 1).data;
+    for (let i = 0; i < 256; i++) {
+        colormapLUT[i * 3 + 0] = imageData[i * 4 + 0];
+        colormapLUT[i * 3 + 1] = imageData[i * 4 + 1];
+        colormapLUT[i * 3 + 2] = imageData[i * 4 + 2];
+    }
+}
+
 document.getElementById('colormap-current').addEventListener('click', () => {
     if (document.getElementById('colormap-list').style.display != 'none') {
         document.getElementById('colormap-list').style.display = 'none';
@@ -446,6 +463,7 @@ document.getElementById('colormap-current').addEventListener('click', () => {
 for (let node of document.getElementById('colormap-list').children) {
     node.addEventListener('click', () => {
         colormapCtx.drawImage(node.children[0], 0, 0);
+        updateColormapLUT();  // Update LUT when colormap changes
         document.getElementById('colormap-list').style.display = 'none';
         if (colorField >= 0) {
             geometry.setAttribute('color', generateCloudColorByField(cloud, colorField));
@@ -481,8 +499,10 @@ window.addEventListener('keypress', (event) => {
 });
 
 colormapCtx.drawImage(document.getElementById('colormap-list').children[0].children[0], 0, 0);
+updateColormapLUT();  // Initialize LUT
 document.getElementById('colormap-list').children[0].children[0].addEventListener('load', () => {
     colormapCtx.drawImage(document.getElementById('colormap-list').children[0].children[0], 0, 0);
+    updateColormapLUT();  // Update LUT after image loads
 });
 
 const orbitList = {
