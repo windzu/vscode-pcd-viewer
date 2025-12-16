@@ -1,11 +1,23 @@
 import { ab2str, str2ab, getWithTypeFromText, getWithTypeFromDataView, setWithTypeToDataView } from './utils.js';
 import { compress, decompress } from './lzf.js';
 
+// TypedArray constructors for each PCD type and size
+const TypedArrayMap = {
+    'F4': Float32Array,
+    'F8': Float64Array,
+    'U1': Uint8Array,
+    'U2': Uint16Array,
+    'U4': Uint32Array,
+    'I1': Int8Array,
+    'I2': Int16Array,
+    'I4': Int32Array,
+};
+
 function parseHeader(textData) {
 
     let header = {};
     let dataStart = textData.search(/[\r\n]DATA\s(\S*)[\f\r\t\v]*\n/i);
-    if(dataStart == -1) {
+    if (dataStart == -1) {
         throw "PCD-Format: not found DATA";
     }
 
@@ -112,10 +124,10 @@ function getPointsFromTextData(textData, header, asList = true) {
                     item.push(getWithTypeFromText(text, type));
                 }
             }
-            if(asList) {
+            if (asList) {
                 point.push(item);
             } else {
-                point[header.fields[j]] =  item;
+                point[header.fields[j]] = item;
             }
         }
         points.push(point);
@@ -126,10 +138,10 @@ function getPointsFromTextData(textData, header, asList = true) {
 function setPointsToTextData(points, header, asList = true) {
     let textData = '';
     for (let i = 0; i < points.length; i++) {
-        if(asList) {
+        if (asList) {
             textData += points[i].map(p => p instanceof Array ? p.join(' ') : p).join(' ');
         } else {
-            textData += header.fields.map((f) => (points[i][f] instanceof Array) ? points[i][f].join(' ') : points[i][f]).join(' ');   
+            textData += header.fields.map((f) => (points[i][f] instanceof Array) ? points[i][f].join(' ') : points[i][f]).join(' ');
         }
         textData += '\n';
     }
@@ -158,7 +170,7 @@ function getPointsFromDataView(dataview, header, asList = true, littleEndian = t
             } else if (count > 1) {
                 item = [];
                 for (let c = 0; c < count; c++) {
-                    if(columnar) {
+                    if (columnar) {
                         offset = (header.offset[j] + c * size) * header.points + i * size;
                     } else {
                         offset = i * header.rowSize + header.offset[j] + c * size;
@@ -226,7 +238,7 @@ function setPointsToDataView(points, dataview, header, asList = true, littleEndi
  * 
  * @returns {Object} 
  */
-export function parse(arrayBuffer, asList = true, littleEndian=true) {
+export function parse(arrayBuffer, asList = true, littleEndian = true) {
 
     const textData = ab2str(new Uint8Array(arrayBuffer));
     const header = parseHeader(textData);
@@ -243,7 +255,7 @@ export function parse(arrayBuffer, asList = true, littleEndian=true) {
 
         let dataview = new DataView(arrayBuffer, header.raw.length);
         points = getPointsFromDataView(dataview, header, asList, littleEndian, false);
-        
+
     } else if (header.data === 'binary_compressed') {
 
         const sizes = new Uint32Array(arrayBuffer.slice(header.raw.length, header.raw.length + 8));
@@ -257,10 +269,118 @@ export function parse(arrayBuffer, asList = true, littleEndian=true) {
     }
 
     return {
-        header, 
+        header,
         points
     }
 };
+
+/**
+ * Fast parse using TypedArrays for better performance with large point clouds.
+ * Returns data as TypedArrays per field instead of array of point objects.
+ * @param {ArrayBuffer} arrayBuffer 
+ * @param {boolean} littleEndian
+ * 
+ * @returns {Object} { header, fieldData: { fieldName: TypedArray, ... }, points: number }
+ */
+export function parseFast(arrayBuffer, littleEndian = true) {
+    const textData = ab2str(new Uint8Array(arrayBuffer));
+    const header = parseHeader(textData);
+    const numPoints = header.points;
+
+    // Create TypedArray for each field
+    const fieldData = {};
+    for (let j = 0; j < header.fields.length; j++) {
+        const fieldName = header.fields[j];
+        const type = header.type[j];
+        const size = header.size[j];
+        const count = header.count[j];
+        const TypedArrayConstructor = TypedArrayMap[type + size] || Float32Array;
+
+        if (count === 1) {
+            fieldData[fieldName] = new TypedArrayConstructor(numPoints);
+        } else {
+            // For fields with count > 1, store as flat array
+            fieldData[fieldName] = new TypedArrayConstructor(numPoints * count);
+        }
+    }
+
+    if (header.data === 'ascii') {
+        parseAsciiToTypedArrays(textData.substr(header.raw.length), header, fieldData);
+    } else if (header.data === 'binary') {
+        const dataview = new DataView(arrayBuffer, header.raw.length);
+        parseBinaryToTypedArrays(dataview, header, fieldData, littleEndian, false);
+    } else if (header.data === 'binary_compressed') {
+        const decompressed = decompress(new Uint8Array(arrayBuffer, header.raw.length + 8));
+        const dataview = new DataView(decompressed);
+        parseBinaryToTypedArrays(dataview, header, fieldData, littleEndian, true);
+    }
+
+    return { header, fieldData };
+}
+
+function parseAsciiToTypedArrays(textData, header, fieldData) {
+    const lines = textData.split('\n');
+    let pointIndex = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === '') continue;
+        const values = lines[i].split(' ');
+
+        for (let j = 0; j < header.fields.length; j++) {
+            const fieldName = header.fields[j];
+            const type = header.type[j];
+            const count = header.count[j];
+            const offset = header.offset[j];
+
+            if (count === 1) {
+                fieldData[fieldName][pointIndex] = type === 'F'
+                    ? parseFloat(values[offset])
+                    : parseInt(values[offset]);
+            } else {
+                for (let c = 0; c < count; c++) {
+                    fieldData[fieldName][pointIndex * count + c] = type === 'F'
+                        ? parseFloat(values[offset + c])
+                        : parseInt(values[offset + c]);
+                }
+            }
+        }
+        pointIndex++;
+    }
+}
+
+function parseBinaryToTypedArrays(dataview, header, fieldData, littleEndian, columnar) {
+    const numPoints = header.points;
+
+    for (let j = 0; j < header.fields.length; j++) {
+        const fieldName = header.fields[j];
+        const type = header.type[j];
+        const size = header.size[j];
+        const count = header.count[j];
+        const arr = fieldData[fieldName];
+
+        for (let i = 0; i < numPoints; i++) {
+            if (count === 1) {
+                let offset;
+                if (columnar) {
+                    offset = header.offset[j] * numPoints + i * size;
+                } else {
+                    offset = i * header.rowSize + header.offset[j];
+                }
+                arr[i] = getWithTypeFromDataView(dataview, offset, littleEndian, type, size);
+            } else {
+                for (let c = 0; c < count; c++) {
+                    let offset;
+                    if (columnar) {
+                        offset = (header.offset[j] + c * size) * numPoints + i * size;
+                    } else {
+                        offset = i * header.rowSize + header.offset[j] + c * size;
+                    }
+                    arr[i * count + c] = getWithTypeFromDataView(dataview, offset, littleEndian, type, size);
+                }
+            }
+        }
+    }
+}
 
 /**
  * Stringify PCD and return ArrayBuffer
@@ -271,7 +391,7 @@ export function parse(arrayBuffer, asList = true, littleEndian=true) {
  * 
  * @returns {ArrayBuffer}
  */
-export function stringify(header, points, asList = true, littleEndian=true) {
+export function stringify(header, points, asList = true, littleEndian = true) {
 
     if (header.data === 'ascii') {
         let textData = '' + header.raw;

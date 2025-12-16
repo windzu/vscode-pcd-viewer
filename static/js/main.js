@@ -1,4 +1,4 @@
-import { parse } from "./pcd-format/pcd-format.js";
+import { parseFast } from "./pcd-format/pcd-format.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -210,29 +210,26 @@ function refreshInfoPanel() {
 
 function generateCloudPosition(cloud) {
     if (cloud == null) return null;
-    let size = cloud.header.width * cloud.header.height;
-    let offset_x = -1;
-    let offset_y = -1;
-    let offset_z = -1;
-    for (let i = 0; i < cloud.header.fields.length; i++) {
-        if (cloud.header.fields[i] == 'x') offset_x = i;
-        if (cloud.header.fields[i] == 'y') offset_y = i;
-        if (cloud.header.fields[i] == 'z') offset_z = i;
-    }
-    let vertices = new Float32Array(size * 3);
-    let sum_x = 0;
-    let sum_y = 0;
-    let sum_z = 0;
+    const size = cloud.header.width * cloud.header.height;
+    const xData = cloud.fieldData['x'];
+    const yData = cloud.fieldData['y'];
+    const zData = cloud.fieldData['z'];
+
+    const vertices = new Float32Array(size * 3);
+    let sum_x = 0, sum_y = 0, sum_z = 0;
+
     for (let i = 0; i < size; i++) {
-        let point = cloud.points[i];
-        if (offset_x >= 0) vertices[i * 3 + 0] = point[offset_x];
-        if (offset_y >= 0) vertices[i * 3 + 1] = point[offset_y];
-        if (offset_z >= 0) vertices[i * 3 + 2] = point[offset_z];
-        sum_x += vertices[i * 3 + 0];
-        sum_y += vertices[i * 3 + 1];
-        sum_z += vertices[i * 3 + 2];
+        const x = xData ? xData[i] : 0;
+        const y = yData ? yData[i] : 0;
+        const z = zData ? zData[i] : 0;
+        vertices[i * 3 + 0] = x;
+        vertices[i * 3 + 1] = y;
+        vertices[i * 3 + 2] = z;
+        sum_x += x;
+        sum_y += y;
+        sum_z += z;
     }
-    cloudCenter.x = - sum_x / size;
+    cloudCenter.x = -sum_x / size;
     cloudCenter.y = sum_z / size;
     cloudCenter.z = sum_y / size;
     return new THREE.BufferAttribute(vertices, 3);
@@ -252,21 +249,25 @@ function generateCloudColorByConstant(cloud, constant) {
 
 function generateCloudColorByField(cloud, colorField) {
     if (cloud == null) return null;
-    if (cloud.header.fields[colorField] === 'rgb') {
+    const fieldName = cloud.header.fields[colorField];
+    if (fieldName === 'rgb') {
         return generateCloudColorByRGB(cloud, colorField);
     }
-    if (cloud.header.fields[colorField] === 'rgba') {
+    if (fieldName === 'rgba') {
         return generateCloudColorByRGBA(cloud, colorField);
     }
-    let size = cloud.header.width * cloud.header.height;
+    const size = cloud.header.width * cloud.header.height;
     if (colorField < 0) colorField = 0;
     if (colorField >= cloud.header.fields.length) colorField = cloud.header.fields.length - 1;
 
-    // Single pass to find min/max
+    const fieldData = cloud.fieldData[cloud.header.fields[colorField]];
+    if (!fieldData) return null;
+
+    // Single pass to find min/max using TypedArray
     let max = -Infinity;
     let min = Infinity;
     for (let i = 0; i < size; i++) {
-        const v = cloud.points[i][colorField];
+        const v = fieldData[i];
         if (v > max) max = v;
         if (v < min) min = v;
     }
@@ -277,7 +278,7 @@ function generateCloudColorByField(cloud, colorField) {
     const invRange = range !== 0 ? 255 / range : 0;
 
     for (let i = 0; i < size; i++) {
-        let index = Math.floor((cloud.points[i][colorField] - min) * invRange);
+        let index = Math.floor((fieldData[i] - min) * invRange);
         if (index < 0) index = 0;
         if (index > 255) index = 255;
         // Use pre-computed LUT instead of getImageData
@@ -289,12 +290,14 @@ function generateCloudColorByField(cloud, colorField) {
 }
 
 function generateCloudColorByRGB(cloud, colorField) {
-    let size = cloud.header.width * cloud.header.height;
-    let colors = new Float32Array(size * 3);
-    let cache = new typeTrans[cloud.header.type[colorField]](1);
-    let view = new Uint8Array(cache.buffer);
+    const size = cloud.header.width * cloud.header.height;
+    const colors = new Float32Array(size * 3);
+    const fieldName = cloud.header.fields[colorField];
+    const fieldData = cloud.fieldData[fieldName];
+    const cache = new typeTrans[cloud.header.type[colorField]](1);
+    const view = new Uint8Array(cache.buffer);
     for (let i = 0; i < size; i++) {
-        cache[0] = cloud.points[i][colorField];
+        cache[0] = fieldData[i];
         colors[i * 3 + 0] = view[2] / 255.0;
         colors[i * 3 + 1] = view[1] / 255.0;
         colors[i * 3 + 2] = view[0] / 255.0;
@@ -303,12 +306,14 @@ function generateCloudColorByRGB(cloud, colorField) {
 }
 
 function generateCloudColorByRGBA(cloud, colorField) {
-    let size = cloud.header.width * cloud.header.height;
-    let colors = new Float32Array(size * 4);
-    let cache = new typeTrans[cloud.header.type[colorField]](1);
-    let view = new Uint8Array(cache.buffer);
+    const size = cloud.header.width * cloud.header.height;
+    const colors = new Float32Array(size * 4);
+    const fieldName = cloud.header.fields[colorField];
+    const fieldData = cloud.fieldData[fieldName];
+    const cache = new typeTrans[cloud.header.type[colorField]](1);
+    const view = new Uint8Array(cache.buffer);
     for (let i = 0; i < size; i++) {
-        cache[0] = cloud.points[i][colorField];
+        cache[0] = fieldData[i];
         colors[i * 4 + 0] = view[2] / 255.0;
         colors[i * 4 + 1] = view[1] / 255.0;
         colors[i * 4 + 2] = view[0] / 255.0;
@@ -338,7 +343,8 @@ function refreshSelectionPanel() {
     if (!selectionPanelBody) {
         return;
     }
-    if (selectedPointIndex === null || !cloud || !cloud.points || !cloud.points[selectedPointIndex]) {
+    const size = cloud ? cloud.header.width * cloud.header.height : 0;
+    if (selectedPointIndex === null || !cloud || !cloud.fieldData || selectedPointIndex >= size) {
         selectionPanelBody.classList.add('empty');
         selectionPanelBody.textContent = 'No point selected';
         return;
@@ -350,14 +356,21 @@ function refreshSelectionPanel() {
         row.className = 'panel-row';
         const field = document.createElement('div');
         field.className = 'field';
-        field.textContent = cloud.header.fields[i];
+        const fieldName = cloud.header.fields[i];
+        field.textContent = fieldName;
         const value = document.createElement('div');
         value.className = 'value';
-        const raw = cloud.points[selectedPointIndex][i];
-        if (Array.isArray(raw)) {
-            value.textContent = raw.map(formatScalar).join(', ');
+        const fieldData = cloud.fieldData[fieldName];
+        const count = cloud.header.count[i];
+        if (count > 1) {
+            // For fields with count > 1, get multiple values
+            const values = [];
+            for (let c = 0; c < count; c++) {
+                values.push(fieldData[selectedPointIndex * count + c]);
+            }
+            value.textContent = values.map(formatScalar).join(', ');
         } else {
-            value.textContent = formatScalar(raw);
+            value.textContent = formatScalar(fieldData[selectedPointIndex]);
         }
         row.appendChild(field);
         row.appendChild(value);
@@ -369,7 +382,8 @@ function selectPoint(index) {
     if (!cloud || !geometry.attributes.position) {
         return;
     }
-    if (!cloud.points || !cloud.points[index]) {
+    const size = cloud.header.width * cloud.header.height;
+    if (!cloud.fieldData || index >= size) {
         clearSelection();
         return;
     }
@@ -714,7 +728,7 @@ window.addEventListener('message', async e => {
         return;
     }
     fileSize = body.fileSize || 0;
-    cloud = parse(body.value.buffer);
+    cloud = parseFast(body.value.buffer);
     clearSelection();
     geometry.setAttribute('position', generateCloudPosition(cloud));
     geometry.setAttribute('color', generateCloudColorByConstant(cloud, defaultColor));
