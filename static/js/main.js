@@ -47,6 +47,23 @@ const selectedMarker = new THREE.Points(selectedMarkerGeometry, selectedMarkerMa
 selectedMarker.visible = false;
 pointcloud.add(selectedMarker);
 
+// Grid and Axes helpers
+let showGrid = true;
+let showAxes = true;
+
+let gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0x555555);
+gridHelper.rotation.x = Math.PI / 2; // Rotate to lie on PCD XY plane
+if (Array.isArray(gridHelper.material)) {
+    gridHelper.material.forEach(m => { m.transparent = true; m.opacity = 0.5; });
+} else {
+    gridHelper.material.transparent = true;
+    gridHelper.material.opacity = 0.5;
+}
+pointcloud.add(gridHelper);
+
+let axesHelper = new THREE.AxesHelper(5);
+pointcloud.add(axesHelper);
+
 let cloudCenter = new THREE.Vector3();
 
 camera.position.y = 5;
@@ -122,6 +139,8 @@ function addTooltip(element, desc, position) {
 let cloud = null;
 let colorField = -1;
 let fileSize = 0;
+let gridToggleBtn = null;
+let axesToggleBtn = null;
 
 // Info panel elements
 const infoPanel = document.getElementById('info-panel');
@@ -131,6 +150,24 @@ let infoToggle = null;
 function formatFileSize(bytes) {
     const mb = bytes / (1024 * 1024);
     return mb.toFixed(3) + ' MB';
+}
+
+function toggleGrid() {
+    showGrid = !showGrid;
+    gridHelper.visible = showGrid;
+    if (gridToggleBtn) {
+        gridToggleBtn.className = showGrid ? 'text current' : 'text';
+    }
+    render();
+}
+
+function toggleAxes() {
+    showAxes = !showAxes;
+    axesHelper.visible = showAxes;
+    if (axesToggleBtn) {
+        axesToggleBtn.className = showAxes ? 'text current' : 'text';
+    }
+    render();
 }
 
 function toggleInfoPanel() {
@@ -206,6 +243,56 @@ function refreshInfoPanel() {
         row.appendChild(value);
         infoPanelBody.appendChild(row);
     }
+}
+
+function updateGridAndAxesSize(positions) {
+    const count = positions.count;
+    if (count === 0) return;
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+
+    for (let i = 0; i < count; i++) {
+        const x = positions.getX(i);
+        const y = positions.getY(i);
+        const z = positions.getZ(i);
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+    const rangeZ = maxZ - minZ;
+    const maxRange = Math.max(rangeX, rangeY, rangeZ, 1);
+
+    // Round up to a nice grid size
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxRange)));
+    let gridSize = Math.ceil(maxRange / magnitude) * magnitude * 2;
+    if (gridSize < 2) gridSize = 2;
+    const divisions = 20;
+
+    // Replace grid
+    pointcloud.remove(gridHelper);
+    gridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0x555555);
+    gridHelper.rotation.x = Math.PI / 2;
+    if (Array.isArray(gridHelper.material)) {
+        gridHelper.material.forEach(m => { m.transparent = true; m.opacity = 0.5; });
+    } else {
+        gridHelper.material.transparent = true;
+        gridHelper.material.opacity = 0.5;
+    }
+    gridHelper.visible = showGrid;
+    pointcloud.add(gridHelper);
+
+    // Replace axes
+    pointcloud.remove(axesHelper);
+    axesHelper = new THREE.AxesHelper(gridSize / 2);
+    axesHelper.visible = showAxes;
+    pointcloud.add(axesHelper);
+
+    render();
 }
 
 function generateCloudPosition(cloud) {
@@ -504,6 +591,12 @@ window.addEventListener('keypress', (event) => {
     if (event.key == '-') {
         pointSizeSub();
     }
+    if (event.key == 'g') {
+        toggleGrid();
+    }
+    if (event.key == 'a') {
+        toggleAxes();
+    }
     if (event.key == '`') {
         useDefault = true;
         geometry.setAttribute('color', generateCloudColorByConstant(cloud, defaultColor));
@@ -636,6 +729,26 @@ let menuContent = document.getElementById('menu-list');
     addTooltip(infoToggle, 'show point cloud info', 'bottom');
     menuContent.appendChild(infoToggle);
 
+    gridToggleBtn = document.createElement('div');
+    gridToggleBtn.innerText = 'Grid';
+    gridToggleBtn.className = 'text current';
+    gridToggleBtn.style.width = 'unset';
+    gridToggleBtn.addEventListener('click', () => {
+        toggleGrid();
+    });
+    addTooltip(gridToggleBtn, 'toggle grid display (g)', 'bottom');
+    menuContent.appendChild(gridToggleBtn);
+
+    axesToggleBtn = document.createElement('div');
+    axesToggleBtn.innerText = 'Axes';
+    axesToggleBtn.className = 'text current';
+    axesToggleBtn.style.width = 'unset';
+    axesToggleBtn.addEventListener('click', () => {
+        toggleAxes();
+    });
+    addTooltip(axesToggleBtn, 'toggle axes display (a)', 'bottom');
+    menuContent.appendChild(axesToggleBtn);
+
     zero.className = 'current';
 }
 
@@ -706,8 +819,8 @@ function updateBackground() {
     document.body.style.setProperty('--highlight', `${255 - front[0]}, ${255 - front[1]}, ${255 - front[2]}`);
     if (useDefault && cloud !== null) {
         geometry.setAttribute('color', generateCloudColorByConstant(cloud, front));
-        render();
     }
+    render();
 }
 
 refreshSelectionPanel();
@@ -730,8 +843,10 @@ window.addEventListener('message', async e => {
     fileSize = body.fileSize || 0;
     cloud = parseFast(body.value.buffer);
     clearSelection();
-    geometry.setAttribute('position', generateCloudPosition(cloud));
+    const posAttr = generateCloudPosition(cloud);
+    geometry.setAttribute('position', posAttr);
     geometry.setAttribute('color', generateCloudColorByConstant(cloud, defaultColor));
+    updateGridAndAxesSize(posAttr);
     let content = document.getElementById('color-fields');
     content.innerHTML = '';
     for (let i = 0; i < cloud.header.fields.length; i++) {
