@@ -1,6 +1,7 @@
 import { sourcePointIndex } from "./pcd-format/pcd-format.js";
 import { fillScalarColors, fillPackedColors } from "./cloud-color.js";
 import { fitCloudView } from "./view-math.js";
+import { pickNearestPoint } from "./point-picking.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -24,6 +25,8 @@ let selectionMode = false;
 let selectedPointIndex = null;
 let selectionToggle = null;
 let pointerDownPosition = null;
+let pickRequest = 0;
+let activePickRequest = null;
 
 let pointSizeLevel = 0;
 let sizeAttenuation = true;
@@ -75,7 +78,7 @@ controls.zoomSpeed = 2.0;
 controls.panSpeed = 0.5;
 controls.enableDamping = true;
 controls.dampingFactor = 0.3;
-controls.addEventListener('change', render);
+controls.addEventListener('change', () => { ++pickRequest; render(); });
 
 function render() {
     renderer.render(scene, camera);
@@ -96,6 +99,7 @@ window.addEventListener('resize', () => {
 
 renderer.domElement.addEventListener('click', handleCanvasClick);
 renderer.domElement.addEventListener('pointerdown', (event) => {
+    ++pickRequest;
     pointerDownPosition = { x: event.clientX, y: event.clientY };
 });
 renderer.domElement.addEventListener('pointerleave', () => {
@@ -464,6 +468,7 @@ function clearSelection() {
 }
 
 function toggleSelectionMode(enabled) {
+    ++pickRequest;
     selectionMode = enabled;
     selectionPanel.style.display = enabled ? 'flex' : 'none';
     updatePanelLayout();
@@ -476,7 +481,7 @@ function toggleSelectionMode(enabled) {
     }
 }
 
-function handleCanvasClick(event) {
+async function handleCanvasClick(event) {
     if (!selectionMode || !cloud) {
         return;
     }
@@ -493,9 +498,27 @@ function handleCanvasClick(event) {
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
-    const intersections = raycaster.intersectObject(pointcloud, false);
-    if (intersections.length > 0 && typeof intersections[0].index === 'number') {
-        selectPoint(intersections[0].index);
+    const request = ++pickRequest;
+    activePickRequest = request;
+    const currentCloud = cloud;
+    pointcloud.updateMatrixWorld(true);
+    const inverse = new THREE.Matrix4().copy(pointcloud.matrixWorld).invert();
+    const localRay = raycaster.ray.clone().applyMatrix4(inverse);
+    const scale = pointcloud.scale.x; // Viewer transforms are rotations and uniform scale.
+    selectionPanelBody.textContent = 'Selecting point…';
+    const result = await pickNearestPoint(cloud.positions, localRay.origin.toArray(),
+        localRay.direction.toArray(), raycaster.params.Points.threshold / scale, {
+            near: raycaster.near / scale, far: raycaster.far / scale,
+            isCancelled: () => request !== pickRequest || cloud !== currentCloud || !selectionMode,
+        });
+    if (activePickRequest !== request) return;
+    activePickRequest = null;
+    if (result.cancelled) {
+        refreshSelectionPanel();
+        return;
+    }
+    if (result.index !== null) {
+        selectPoint(result.index);
     } else {
         clearSelection();
     }
@@ -825,6 +848,7 @@ function showLoadError(message) {
 }
 
 function installCloud(result) {
+    ++pickRequest;
     cloud = result;
     clearSelection();
     ++colorRequest;
