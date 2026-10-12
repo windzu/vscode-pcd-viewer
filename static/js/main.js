@@ -130,6 +130,7 @@ function pointSizeSub() {
 }
 
 function addTooltip(element, desc, position) {
+    element.title = desc;
     let tooltip = document.createElement('div');
     tooltip.innerText = desc;
     tooltip.className = `tooltip ${position}`;
@@ -176,12 +177,18 @@ function toggleInfoPanel() {
     if (!infoPanel) return;
     const isVisible = infoPanel.style.display !== 'none';
     infoPanel.style.display = isVisible ? 'none' : 'flex';
+    updatePanelLayout();
     if (infoToggle) {
         infoToggle.className = isVisible ? 'text' : 'text current';
     }
     if (!isVisible) {
         refreshInfoPanel();
     }
+}
+
+function updatePanelLayout() {
+    document.getElementById('side-panels').classList.toggle('both-panels',
+        infoPanel.style.display !== 'none' && selectionPanel.style.display !== 'none');
 }
 
 function refreshInfoPanel() {
@@ -457,6 +464,8 @@ function clearSelection() {
 
 function toggleSelectionMode(enabled) {
     selectionMode = enabled;
+    selectionPanel.style.display = enabled ? 'flex' : 'none';
+    updatePanelLayout();
     if (selectionToggle) {
         selectionToggle.className = enabled ? 'text current' : 'text';
     }
@@ -845,10 +854,11 @@ function installCloud(result) {
         let item = document.createElement('div');
         item.dataset.index = i;
         item.id = 'field-' + i;
+        item.title = cloud.header.fields[i];
         item.addEventListener('click', selectFieldColor);
         let key = document.createElement('div');
         key.className = 'key';
-        key.innerText = (i + 1).toString();
+        key.innerText = i < 9 ? (i + 1).toString() : i === 9 ? '0' : '';
         let name = document.createElement('div');
         let nameArr = cloud.header.fields[i].split('_').filter(Boolean).map(v => v[0].toLowerCase());
         nameArr[0] = nameArr[0].toUpperCase();
