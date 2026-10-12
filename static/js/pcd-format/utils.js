@@ -1,10 +1,10 @@
 
 export function ab2str(array) {
-    let s = '';
-    for (let i = 0, il = array.length; i < il; i++) {
-        s += String.fromCharCode(array[i]);
+    const chunks = [];
+    for (let i = 0; i < array.length; i += 16384) {
+        chunks.push(String.fromCharCode(...array.subarray(i, i + 16384)));
     }
-    return s;
+    return chunks.join('');
 }
 
 export function str2ab(str) {

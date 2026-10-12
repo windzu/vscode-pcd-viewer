@@ -56,6 +56,9 @@ A VS Code extension for previewing Point Cloud Data (PCD) files directly in the 
 This extension contributes the following settings:
 
 - `pcdViewer.backgroundColor`: Set the background color of the viewer (default: `#000000`)
+- `pcdViewer.maxPreviewPoints`: Maximum displayed points (default: `1000000`, range: `0`–`5000000`). Set it to `0` for full resolution. Reopen the preview after changing this setting.
+
+By default, large files are sampled evenly across the complete record, including the first and last point. Click **Full** to parse and display every point, or **Preview** to return to the configured preview budget. Full resolution bypasses both the point-count and 64 MiB preview field-data limits, so memory/GPU work scales with the complete cloud. Parsing remains in a background worker in both modes. The viewer shows the original and displayed point counts separately and reports the original point index when selecting a preview point. Sampling affects only the display: the original PCD and saved data remain unchanged. Compressed data larger than 512 MiB after decompression is rejected with a visible error.
 
 ## Supported PCD Formats
 
@@ -93,7 +96,11 @@ Or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/i
 
 ## Known Issues
 
-- Large point clouds may take a moment to load
+- Large files still need to be read and transferred to the viewer. Parsing runs in a background worker, and preview memory and GPU allocations are bounded.
+
+## Development
+
+`npm test` compiles the extension and self-contained browser worker, runs TypeScript linting, and checks the PCD parser and packaged worker, including a 12-million-point regression fixture. `npm run test:vscode` runs the VS Code extension integration suite. `npx vsce package` produces the installable extension.
 
 ## Release Notes
 

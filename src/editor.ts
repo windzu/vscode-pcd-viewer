@@ -26,14 +26,14 @@ class PcdDocument implements vscode.CustomDocument {
         if (uri.scheme === 'untitled') {
             return new Uint8Array();
         }
-        let data = await vscode.workspace.fs.readFile(uri);
-        return new Uint8Array((data as Buffer).buffer);
+        // VS Code's binary message serializer recognizes plain Uint8Array views,
+        // while Node Buffer has toJSON(). Preserve the exact range without copying.
+        const data = await vscode.workspace.fs.readFile(uri);
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     }
 
 
-    dispose(): void {
-        // throw new Error('Method not implemented.');
-    }
+    dispose(): void { this._documentData = new Uint8Array(); }
 
     private readonly _uri: vscode.Uri;
     private _documentData: Uint8Array;
@@ -150,7 +150,10 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
 
         // Wait for the webview to be properly ready before we init
         webviewPanel.webview.onDidReceiveMessage(e => {
-            if (e.type === 'ready') {
+            if (e.type === 'ready' || e.type === 'reload') {
+                const configuredMax = vscode.workspace.getConfiguration('pcdViewer').get<number>('maxPreviewPoints', 1000000);
+                const maxPoints = e.type === 'reload' && typeof e.fullResolution === 'boolean'
+                    ? (e.fullResolution ? 0 : (configuredMax || 1000000)) : configuredMax;
                 const color = new Color(vscode.workspace.getConfiguration('pcdViewer').get('backgroundColor', '#000') as string);
                 const front = (color.lch.l > 50) ? [0, 0, 0] : [255, 255, 255];
                 this.postMessage(webviewPanel, 'background', {
@@ -158,7 +161,8 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                 });
                 this.postMessage(webviewPanel, 'init', {
                     value: document.documentData,
-                    fileSize: document.documentData.byteLength
+                    fileSize: document.documentData.byteLength,
+                    maxPoints
                 });
                 // if (document.uri.scheme === 'untitled') {
                 //     this.postMessage(webviewPanel, 'init', {
@@ -208,6 +212,8 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
         //
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(
             this._context.extensionUri, 'static', 'js', 'main.js'));
+        const workerUri = webview.asWebviewUri(vscode.Uri.joinPath(
+            this._context.extensionUri, 'out', 'pcd-worker.js'));
 
         const styleResetUri = webview.asWebviewUri(vscode.Uri.joinPath(
             this._context.extensionUri, 'media', 'reset.css'));
@@ -230,7 +236,7 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                 <title>PCD viewer</title>
                 <link rel="stylesheet" type="text/css"href="${styleVSCodeUri}">
             </head>
-            <body>
+            <body data-worker-uri="${workerUri}">
                 <script nonce="${nonce}" src="${threeJsUri}"></script>
                 <script nonce="${nonce}" src="${orbitControlsUri}"></script>
                 <div id="menu-list"></div>
@@ -255,6 +261,7 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                     <div class="panel-header">Point Cloud Info</div>
                     <div class="panel-body"></div>
                 </div>
+                <div id="loading-status" role="status" aria-live="polite">Loading point cloud…</div>
                 <script nonce="${nonce}" src="${scriptUri}" type="module"></script>
             </body>
             </html>`;

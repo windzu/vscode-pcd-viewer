@@ -10,3 +10,8 @@ vsc-extension-quickstart.md
 **/.eslintrc.json
 **/*.map
 **/*.ts
+tests/**
+scripts/**
+.github/**
+static/js/pcd-worker-source.js
+static/js/preview-data.js

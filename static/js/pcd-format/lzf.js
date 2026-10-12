@@ -114,17 +114,24 @@ export function compress(data) {
     return new Uint8Array(output).buffer;
 }
 
-export function decompress(data) {
-    let input = new Uint8Array(data), output = [],
-        iidx = 0, iend = input.byteLength, oidx = 0,
-        ctrl, len, reference;
-
-    do {
+export function decompress(data, expectedLength) {
+    const input = new Uint8Array(data.buffer || data, data.byteOffset || 0, data.byteLength);
+    let output = new Uint8Array(expectedLength === undefined ? 4096 : expectedLength);
+    let iidx = 0, iend = input.byteLength, oidx = 0, ctrl, len, reference;
+    function ensureCapacity(required) {
+        if (required <= output.length) return;
+        if (expectedLength !== undefined) throw new Error('LZF: output exceeds declared size');
+        const grown = new Uint8Array(Math.max(required, output.length * 2));
+        grown.set(output);
+        output = grown;
+    }
+    while (iidx < iend) {
         ctrl = input[iidx++];
         if (ctrl < (1 << 5)) {
             ctrl++;
             if (iidx + ctrl > iend)
                 throw "LZF: Input buffer is not large enough when input index + ctrl ";
+            ensureCapacity(oidx + ctrl);
             // copy uncompressed data
             while (ctrl > 0) {
                 output[oidx++] = input[iidx++];
@@ -134,11 +141,13 @@ export function decompress(data) {
             len = ctrl >> 5;
             reference = oidx - ((ctrl & 0x1f) << 8) - 1;
             if (len == 7) {
+                if (iidx >= iend) throw new Error('LZF: truncated length');
                 // add more len
                 len += input[iidx++];
                 if (iidx >= iend)
                     throw "LZF: Input buffer is not large enough ";
             }
+            if (iidx >= iend) throw new Error('LZF: truncated reference');
             reference -= input[iidx++];
             if (reference < 0) 
                 throw "LZF: reference is less than 0";
@@ -146,13 +155,14 @@ export function decompress(data) {
                 throw "LZF: reference is bigger than output index ";
 
             len += 2;
+            ensureCapacity(oidx + len);
             // copy compressed data
             while (len > 0){
                 output[oidx++] = output[reference++];
                 len--;
             };
         }
-    } while (iidx < iend);
-
-    return new Uint8Array(output).buffer;
+    }
+    if (expectedLength !== undefined && oidx !== expectedLength) throw new Error('LZF: output size mismatch');
+    return output.length === oidx ? output.buffer : output.slice(0, oidx).buffer;
 }
