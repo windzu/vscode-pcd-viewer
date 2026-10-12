@@ -1,5 +1,6 @@
 import { sourcePointIndex } from "./pcd-format/pcd-format.js";
 import { fillScalarColors, fillPackedColors } from "./cloud-color.js";
+import { fitCloudView } from "./view-math.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -302,7 +303,7 @@ function updateGridAndAxesSize(positions) {
 
 function generateCloudPosition(cloud) {
     if (cloud == null) return null;
-    cloudCenter.set(-cloud.center[0], cloud.center[2], cloud.center[1]);
+    cloudCenter.fromArray(cloud.center).applyQuaternion(pointcloud.quaternion);
     return new THREE.BufferAttribute(cloud.positions, 3);
 }
 
@@ -603,7 +604,34 @@ const orbitList = {
     }
 }
 
-let centerMode = false;
+let centerMode = true;
+let originButton = null;
+let centerButton = null;
+
+function frameCloud(direction) {
+    if (!cloud) return;
+    cloudCenter.fromArray(cloud.center).applyQuaternion(pointcloud.quaternion);
+    const localTarget = centerMode ? cloud.center : [0, 0, 0];
+    const target = new THREE.Vector3().fromArray(localTarget).applyQuaternion(pointcloud.quaternion);
+    const { radius, distance } = fitCloudView(cloud.bounds, localTarget, camera.fov, camera.aspect);
+    controls.target.copy(target);
+    camera.position.copy(target).add(direction.clone().normalize().multiplyScalar(distance));
+    camera.near = Math.max(radius / 1000000, 0.00001);
+    camera.far = Math.max(distance + radius * 2, 10);
+    camera.updateProjectionMatrix();
+    controls.target0.copy(target);
+    controls.position0.copy(camera.position);
+    controls.zoom0 = camera.zoom;
+    controls.update();
+    if (originButton) originButton.className = centerMode ? '' : 'current';
+    if (centerButton) centerButton.className = centerMode ? 'current' : '';
+    render();
+}
+
+function setCenterMode(enabled) {
+    centerMode = enabled;
+    frameCloud(camera.position.clone().sub(controls.target));
+}
 
 let orbitContent = document.getElementById('orbit-list');
 let orbitAxis = 'Z+';
@@ -613,14 +641,7 @@ for (let i in orbitList) {
     item.addEventListener('click', (event) => {
         orbitAxis = event.currentTarget.innerText;
         pointcloud.quaternion.copy(orbitList[event.currentTarget.innerText].quaternion);
-        let target = centerMode ? cloudCenter : new THREE.Vector3();
-        let position = orbitList[event.currentTarget.innerText].position.clone().add(target);
-        // controls.target0.copy(target);
-        // controls.target.copy(target);
-        controls.position0.copy(position);
-        // camera.position.copy(position);
-        // controls.update();
-        controls.reset();
+        frameCloud(orbitList[orbitAxis].position);
         document.querySelectorAll('#orbit-list>div').forEach((node) => { node.className = ''; });
         item.className = 'current';
     });
@@ -635,34 +656,14 @@ let menuContent = document.getElementById('menu-list');
 
     zero.innerText = 'O';
     zero.addEventListener('click', (event) => {
-        centerMode = false;
-        let target = new THREE.Vector3();
-        let position = camera.position.clone().sub(controls.target);
-        controls.target0.copy(target);
-        controls.target.copy(target);
-        controls.position0.copy(orbitList[orbitAxis].position);
-        camera.position.copy(position);
-        controls.update();
-        render();
-        zero.className = 'current';
-        center.className = '';
+        setCenterMode(false);
     });
     addTooltip(zero, 'use coordinate origin as center', 'bottom');
     menuContent.appendChild(zero);
 
     center.innerText = 'C';
     center.addEventListener('click', (event) => {
-        centerMode = true;
-        let target = cloudCenter;
-        let position = camera.position.clone().sub(controls.target).add(cloudCenter);
-        controls.target0.copy(target);
-        controls.target.copy(target);
-        controls.position0.copy(orbitList[orbitAxis].position.clone().add(cloudCenter));
-        camera.position.copy(position);
-        controls.update();
-        render();
-        zero.className = '';
-        center.className = 'current';
+        setCenterMode(true);
     });
     addTooltip(center, 'use the center of the point cloud', 'bottom');
     menuContent.appendChild(center);
@@ -723,7 +724,9 @@ let menuContent = document.getElementById('menu-list');
     addTooltip(axesToggleBtn, 'toggle axes display (a)', 'bottom');
     menuContent.appendChild(axesToggleBtn);
 
-    zero.className = 'current';
+    originButton = zero;
+    centerButton = center;
+    center.className = 'current';
 }
 
 let reverseColor = false;
@@ -832,15 +835,11 @@ function installCloud(result) {
     const posAttr = generateCloudPosition(cloud);
     geometry.setAttribute('position', posAttr);
     setConstantCloudColor(defaultColor);
-    const bounds = cloud.bounds;
-    const center = new THREE.Vector3().fromArray(bounds.min).add(new THREE.Vector3().fromArray(bounds.max)).multiplyScalar(0.5);
-    const radius = Math.max(new THREE.Vector3().fromArray(bounds.max).distanceTo(center), 0.1);
-    geometry.boundingSphere = new THREE.Sphere(center, radius);
-    const target = center.clone().applyQuaternion(pointcloud.quaternion);
-    controls.target.copy(target);
-    camera.position.copy(target).add(new THREE.Vector3(1, 0.8, 1).normalize().multiplyScalar(radius / Math.sin(camera.fov * Math.PI / 360) * 1.2));
-    camera.updateProjectionMatrix();
-    controls.update();
+    const boundsCenter = new THREE.Vector3().fromArray(cloud.bounds.min)
+        .add(new THREE.Vector3().fromArray(cloud.bounds.max)).multiplyScalar(0.5);
+    geometry.boundingSphere = new THREE.Sphere(boundsCenter,
+        Math.max(new THREE.Vector3().fromArray(cloud.bounds.max).distanceTo(boundsCenter), 0.1));
+    frameCloud(new THREE.Vector3(1, 0.8, 1));
     updateGridAndAxesSize(posAttr);
     colorField = -1;
     useDefault = true;
