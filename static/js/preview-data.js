@@ -1,4 +1,5 @@
 import { parseFast } from './pcd-format/pcd-format.js';
+import { fieldRange } from './cloud-color.js';
 
 export function preparePreview(data, maxPoints, onProgress) {
     const cloud = parseFast(data, true, { maxPoints, onProgress });
@@ -25,5 +26,12 @@ export function preparePreview(data, maxPoints, onProgress) {
     }
     if (finitePoints) for (let j = 0; j < 3; j++) center[j] /= finitePoints;
     else for (let j = 0; j < 3; j++) min[j] = max[j] = 0;
-    return { ...cloud, positions, center, bounds: { min, max } };
+    const fieldRanges = {};
+    for (let i = 0; i < cloud.header.fields.length; i++) {
+        const name = cloud.header.fields[i];
+        if (name !== 'rgb' && name !== 'rgba') {
+            fieldRanges[name] = fieldRange(cloud.fieldData[name], cloud.header.count[i], cloud.points);
+        }
+    }
+    return { ...cloud, positions, center, bounds: { min, max }, fieldRanges };
 }

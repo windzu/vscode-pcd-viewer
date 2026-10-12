@@ -1,4 +1,5 @@
 import { sourcePointIndex } from "./pcd-format/pcd-format.js";
+import { fillScalarColors, fillPackedColors } from "./cloud-color.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -29,7 +30,6 @@ function pointSize() {
     return Math.pow(1.2, pointSizeLevel) * (sizeAttenuation ? 0.01 : 1);
 }
 
-const typeTrans = { 'F': Float32Array, 'U': Uint32Array, 'I': Int32Array };
 
 let geometry = new THREE.BufferGeometry();
 let material = new THREE.PointsMaterial({ size: pointSize(), vertexColors: true, sizeAttenuation: sizeAttenuation });
@@ -300,89 +300,73 @@ function generateCloudPosition(cloud) {
 }
 
 function setConstantCloudColor(constant) {
+    fieldColorMode.value = 0;
+    if (material.vertexColors) material.needsUpdate = true;
     material.vertexColors = false;
     material.color.setRGB(constant[0] / 255, constant[1] / 255, constant[2] / 255);
-    material.needsUpdate = true;
 }
 
-function generateCloudColorByField(cloud, colorField) {
-    if (cloud == null) return null;
-    material.vertexColors = true;
-    material.color.setRGB(1, 1, 1);
-    material.needsUpdate = true;
-    const fieldName = cloud.header.fields[colorField];
-    if (fieldName === 'rgb') {
-        return generateCloudColorByRGB(cloud, colorField);
-    }
-    if (fieldName === 'rgba') {
-        return generateCloudColorByRGBA(cloud, colorField);
-    }
-    const size = cloud.points;
-    if (colorField < 0) colorField = 0;
-    if (colorField >= cloud.header.fields.length) colorField = cloud.header.fields.length - 1;
+// One scalar and one optional packed-color buffer per cloud, reused on every switch.
+let scalarAttribute = null;
+let packedAttribute = null;
+let colorRequest = 0;
+const fieldColorMode = { value: 0 };
+const colormapTexture = new THREE.DataTexture(new Uint8Array(256 * 3), 256, 1, THREE.RGBFormat);
+colormapTexture.minFilter = colormapTexture.magFilter = THREE.NearestFilter;
+material.onBeforeCompile = shader => {
+    shader.uniforms.pcdColorMode = fieldColorMode;
+    shader.uniforms.pcdColormap = { value: colormapTexture };
+    shader.vertexShader = 'attribute float pcdScalar; varying float vPcdScalar;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPcdScalar = pcdScalar;');
+    shader.fragmentShader = 'uniform float pcdColorMode; uniform sampler2D pcdColormap; varying float vPcdScalar;\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\nif (pcdColorMode == 1.0) diffuseColor.rgb *= texture2D(pcdColormap, vec2((vPcdScalar + 0.5) / 256.0, 0.5)).rgb;');
+};
+material.defaultAttributeValues = { pcdScalar: [0] };
 
-    const fieldData = cloud.fieldData[cloud.header.fields[colorField]];
-    const fieldCount = cloud.header.count[colorField];
-    if (!fieldData) return null;
-
-    // Single pass to find min/max using TypedArray
-    let max = -Infinity;
-    let min = Infinity;
-    for (let i = 0; i < size; i++) {
-        const v = fieldData[i * fieldCount];
-        if (v > max) max = v;
-        if (v < min) min = v;
-    }
-
-    // Second pass to compute colors using pre-computed LUT
-    const range = max - min;
-    const colors = new Float32Array(size * 3);
-    const invRange = range !== 0 ? 255 / range : 0;
-
-    for (let i = 0; i < size; i++) {
-        let index = Math.floor((fieldData[i * fieldCount] - min) * invRange);
-        if (!Number.isFinite(index)) index = 0;
-        if (index < 0) index = 0;
-        if (index > 255) index = 255;
-        // Use pre-computed LUT instead of getImageData
-        colors[i * 3 + 0] = colormapLUT[index * 3 + 0] / 255.0;
-        colors[i * 3 + 1] = colormapLUT[index * 3 + 1] / 255.0;
-        colors[i * 3 + 2] = colormapLUT[index * 3 + 2] / 255.0;
-    }
-    return new THREE.BufferAttribute(colors, 3);
+function updateLoadStatus() {
+    if (!cloud) return;
+    loadingStatus.setAttribute('role', 'status');
+    loadingStatus.hidden = !fullResolution && cloud.points === cloud.sourcePoints;
+    loadingStatus.textContent = fullResolution ? `Full resolution: ${cloud.points.toLocaleString()} points` :
+        `Preview: ${cloud.points.toLocaleString()} / ${cloud.sourcePoints.toLocaleString()} points (sampled)`;
 }
 
-function generateCloudColorByRGB(cloud, colorField) {
-    const size = cloud.points;
-    const colors = new Float32Array(size * 3);
-    const fieldName = cloud.header.fields[colorField];
-    const fieldData = cloud.fieldData[fieldName];
-    const cache = new typeTrans[cloud.header.type[colorField]](1);
-    const view = new Uint8Array(cache.buffer);
-    for (let i = 0; i < size; i++) {
-        cache[0] = fieldData[i];
-        colors[i * 3 + 0] = view[2] / 255.0;
-        colors[i * 3 + 1] = view[1] / 255.0;
-        colors[i * 3 + 2] = view[0] / 255.0;
+async function colorByField(index) {
+    if (!cloud || index < 0 || index >= cloud.header.fields.length) return;
+    const request = ++colorRequest;
+    const currentCloud = cloud;
+    const name = cloud.header.fields[index];
+    colorField = index;
+    useDefault = false;
+    document.querySelectorAll('#color-fields>div').forEach(node => { node.className = ''; });
+    document.getElementById('field-' + index).className = 'current';
+    loadingStatus.hidden = false;
+    loadingStatus.textContent = `Coloring by ${name}…`;
+    const options = { isCancelled: () => request !== colorRequest || cloud !== currentCloud };
+    const packed = name === 'rgb' || name === 'rgba';
+    try {
+        if (packed) {
+            if (!packedAttribute) packedAttribute = new THREE.BufferAttribute(new Uint8Array(cloud.points * 4), 4, true);
+            if (!await fillPackedColors(packedAttribute.array, cloud.fieldData[name], cloud.header.count[index], cloud.header.type[index], name === 'rgba', options)) return;
+            geometry.setAttribute('color', packedAttribute);
+            packedAttribute.needsUpdate = true;
+            fieldColorMode.value = 0;
+        } else {
+            if (!scalarAttribute) scalarAttribute = new THREE.BufferAttribute(new Float32Array(cloud.points), 1);
+            if (!await fillScalarColors(scalarAttribute.array, cloud.fieldData[name], cloud.header.count[index], cloud.fieldRanges[name], options)) return;
+            geometry.setAttribute('pcdScalar', scalarAttribute);
+            scalarAttribute.needsUpdate = true;
+            fieldColorMode.value = 1;
+        }
+        // Keep attributes attached so geometry.dispose also releases inactive buffers.
+        if (material.vertexColors !== packed) material.needsUpdate = true;
+        material.vertexColors = packed;
+        material.color.setRGB(1, 1, 1);
+        updateLoadStatus();
+        render();
+    } catch (error) {
+        if (!options.isCancelled()) showLoadError(error.message || String(error));
     }
-    return new THREE.BufferAttribute(colors, 3);
-}
-
-function generateCloudColorByRGBA(cloud, colorField) {
-    const size = cloud.points;
-    const colors = new Float32Array(size * 4);
-    const fieldName = cloud.header.fields[colorField];
-    const fieldData = cloud.fieldData[fieldName];
-    const cache = new typeTrans[cloud.header.type[colorField]](1);
-    const view = new Uint8Array(cache.buffer);
-    for (let i = 0; i < size; i++) {
-        cache[0] = fieldData[i];
-        colors[i * 4 + 0] = view[2] / 255.0;
-        colors[i * 4 + 1] = view[1] / 255.0;
-        colors[i * 4 + 2] = view[0] / 255.0;
-        colors[i * 4 + 3] = view[3] / 255.0;
-    }
-    return new THREE.BufferAttribute(colors, 4);
 }
 
 function formatScalar(value) {
@@ -508,13 +492,7 @@ function handleCanvasClick(event) {
 }
 
 function selectFieldColor(event) {
-    useDefault = false;
-    colorField = parseInt(event.currentTarget.dataset.index);
-    geometry.setAttribute('color', generateCloudColorByField(cloud, colorField));
-    render();
-    document.querySelectorAll('#color-fields>div').forEach((node) => { node.className = ''; });
-    document.getElementById('field-' + colorField).className = 'current';
-    return true;
+    colorByField(Number(event.currentTarget.dataset.index));
 }
 
 let colormapCtx = document.getElementById('colormap').getContext('2d');
@@ -529,6 +507,9 @@ function updateColormapLUT() {
         colormapLUT[i * 3 + 1] = imageData[i * 4 + 1];
         colormapLUT[i * 3 + 2] = imageData[i * 4 + 2];
     }
+    colormapTexture.image.data.set(colormapLUT);
+    colormapTexture.needsUpdate = true;
+    if (cloud && !useDefault) render();
 }
 
 document.getElementById('colormap-current').addEventListener('click', () => {
@@ -544,25 +525,15 @@ for (let node of document.getElementById('colormap-list').children) {
         colormapCtx.drawImage(node.children[0], 0, 0);
         updateColormapLUT();  // Update LUT when colormap changes
         document.getElementById('colormap-list').style.display = 'none';
-        if (colorField >= 0) {
-            geometry.setAttribute('color', generateCloudColorByField(cloud, colorField));
-            render();
-        }
+        if (!useDefault) render();
     });
 }
 
 window.addEventListener('keypress', (event) => {
     if (event.key.charCodeAt(0) >= '0'.charCodeAt(0) && event.key.charCodeAt(0) <= '9'.charCodeAt(0)) {
         if (!cloud) return;
-        useDefault = false;
-        let key = (parseInt(event.key) + 9) % 10
-        if (key < cloud.header.fields.length) {
-            colorField = key;
-            geometry.setAttribute('color', generateCloudColorByField(cloud, colorField));
-            render();
-            document.querySelectorAll('#color-fields>div').forEach((node) => { node.className = ''; });
-            document.getElementById('color-fields').children[key].className = 'current';
-        }
+        const key = (parseInt(event.key) + 9) % 10;
+        if (key < cloud.header.fields.length) colorByField(key);
     }
     if (event.key == '+' || event.key == '=') {
         pointSizeAdd();
@@ -577,8 +548,11 @@ window.addEventListener('keypress', (event) => {
         toggleAxes();
     }
     if (event.key == '`') {
+        ++colorRequest;
         useDefault = true;
-        setConstantCloudColor(defaultColor);
+        colorField = -1;
+        updateBackground();
+        updateLoadStatus();
         render();
         document.querySelectorAll('#color-fields>div').forEach((node) => { node.className = ''; });
     }
@@ -841,7 +815,9 @@ function showLoadError(message) {
 function installCloud(result) {
     cloud = result;
     clearSelection();
+    ++colorRequest;
     geometry.dispose();
+    scalarAttribute = packedAttribute = null;
     geometry = new THREE.BufferGeometry();
     pointcloud.geometry = geometry;
     const posAttr = generateCloudPosition(cloud);
@@ -860,11 +836,9 @@ function installCloud(result) {
     colorField = -1;
     useDefault = true;
     refreshInfoPanel();
-    loadingStatus.setAttribute('role', 'status');
     resolutionButton.disabled = false;
-    loadingStatus.hidden = !fullResolution && cloud.points === cloud.sourcePoints;
-    loadingStatus.textContent = fullResolution ? `Full resolution: ${cloud.points.toLocaleString()} points` :
-        `Preview: ${cloud.points.toLocaleString()} / ${cloud.sourcePoints.toLocaleString()} points (sampled)`;
+    updateBackground();
+    updateLoadStatus();
     let content = document.getElementById('color-fields');
     content.innerHTML = '';
     for (let i = 0; i < cloud.header.fields.length; i++) {
