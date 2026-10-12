@@ -50,6 +50,7 @@ selectedMarkerGeometry.setAttribute('position', new THREE.BufferAttribute(new Fl
 const selectedMarkerMaterial = new THREE.PointsMaterial({ size: pointSize() * 6, color: 0xff3366, sizeAttenuation: sizeAttenuation });
 const selectedMarker = new THREE.Points(selectedMarkerGeometry, selectedMarkerMaterial);
 selectedMarker.visible = false;
+selectedMarker.frustumCulled = false;
 pointcloud.add(selectedMarker);
 
 // Grid and Axes helpers
@@ -889,8 +890,8 @@ function installCloud(result) {
         key.innerText = i < 9 ? (i + 1).toString() : i === 9 ? '0' : '';
         let name = document.createElement('div');
         let nameArr = cloud.header.fields[i].split('_').filter(Boolean).map(v => v[0].toLowerCase());
-        nameArr[0] = nameArr[0].toUpperCase();
-        name.innerText = nameArr.join('');
+        if (nameArr.length) nameArr[0] = nameArr[0].toUpperCase();
+        name.innerText = nameArr.join('') || cloud.header.fields[i];
         if (cloud.header.fields[i] === 'rgb' || cloud.header.fields[i] === 'rgba') name.innerText = cloud.header.fields[i].toUpperCase();
         item.appendChild(key);
         item.appendChild(name);
