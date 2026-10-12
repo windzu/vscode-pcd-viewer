@@ -17,13 +17,20 @@ A VS Code extension for previewing Point Cloud Data (PCD) files directly in the 
   - Left-click + drag: Rotate
   - Right-click + drag: Pan
   - Scroll: Zoom
-- **Preset Views**: Quick access to standard viewing angles (X+, X-, Y+, Y-, Z+, Z-)
+- **Preset Views**: Fit the complete cloud to standard viewing angles (X+, X-, Y+, Y-, Z+, Z-), including portrait editors and clouds offset from the origin
 - **Center Mode**: Toggle between coordinate origin (O) and point cloud center (C) as the rotation pivot
 
 ### 🔍 Point Selection
 
 - **Selection Mode**: Click the "Select" button to enable point selection
 - **Point Inspector**: View all field values of a selected point in the selection panel
+- **Responsive Picking**: Nearest-point selection yields to the UI and cancels stale work when the camera or cloud changes
+
+### Large Clouds and Split Editors
+
+- Scalar coloring reuses one buffer; colormap changes run on the GPU without rebuilding a full RGB array.
+- Rendering runs on demand, pauses in hidden editors, and retains the loaded cloud when switching tabs.
+- Toolbars wrap, metadata panels scroll within the available space, and the bottom field list scrolls horizontally. Selection details appear when selection mode is enabled.
 
 ### ⚙️ Customization
 
@@ -91,7 +98,7 @@ Or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/i
 1. Open any `.pcd` file in VS Code
 2. The point cloud will automatically be displayed in the 3D viewer
 3. Use mouse controls to navigate the view
-4. Select a field from the right panel to colorize by that field's values
+4. Select a field from the bottom field list to colorize by that field's values
 5. Click on the colormap bar to change the color scheme
 
 ## Known Issues

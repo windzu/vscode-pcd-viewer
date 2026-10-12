@@ -82,9 +82,7 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
             PcdEditorProvider.viewType,
             new PcdEditorProvider(context),
             {
-                // For this demo extension, we enable `retainContextWhenHidden` which keeps the 
-                // webview alive even when it is not visible. You should avoid using this setting
-                // unless is absolutely required as it does have memory overhead.
+                // Retain expensive full-cloud buffers; visibility messages suspend rendering.
                 webviewOptions: {
                     retainContextWhenHidden: true,
                 },
@@ -146,11 +144,18 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
         };
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
+        const sendVisibility = () => this.postMessage(webviewPanel, 'visibility', {
+            visible: webviewPanel.visible,
+        });
+        const visibilityListener = webviewPanel.onDidChangeViewState(sendVisibility);
+        webviewPanel.onDidDispose(() => visibilityListener.dispose());
+
         // webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e));
 
         // Wait for the webview to be properly ready before we init
         webviewPanel.webview.onDidReceiveMessage(e => {
             if (e.type === 'ready' || e.type === 'reload') {
+                sendVisibility();
                 const configuredMax = vscode.workspace.getConfiguration('pcdViewer').get<number>('maxPreviewPoints', 1000000);
                 const maxPoints = e.type === 'reload' && typeof e.fullResolution === 'boolean'
                     ? (e.fullResolution ? 0 : (configuredMax || 1000000)) : configuredMax;
@@ -239,8 +244,25 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
             <body data-worker-uri="${workerUri}">
                 <script nonce="${nonce}" src="${threeJsUri}"></script>
                 <script nonce="${nonce}" src="${orbitControlsUri}"></script>
-                <div id="menu-list"></div>
-                <div id="orbit-list"></div>
+                <div id="viewer-ui">
+                  <header id="toolbar">
+                    <div id="menu-list"></div>
+                    <div id="orbit-list"></div>
+                  </header>
+                  <div id="side-panels">
+                    <div id="info-panel" style="display: none;">
+                        <div class="panel-header">Point Cloud Info</div>
+                        <div class="panel-body"></div>
+                    </div>
+                    <div id="selection-panel" style="display: none;">
+                        <div class="panel-header">Selection</div>
+                        <div class="panel-body empty">No point selected</div>
+                    </div>
+                  </div>
+                  <footer id="display-controls">
+                    <div id="loading-status" role="status" aria-live="polite">Loading point cloud…</div>
+                    <div id="bottom-controls">
+                      <div id="colormap-group">
                 <div id="colormap-list" style="display: none;">
                     <div><img src="${colorscale_rainbowUri}"></div>
                     <div><img src="${colorscale_boneUri}"></div>
@@ -252,16 +274,11 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
                     <div><img src="${colorscale_parulaUri}"></div>
                 </div>
                 <div id="colormap-current"><canvas id="colormap" width="256px" height="10px"></canvas></div>
-                <div id="color-fields"></div>
-                <div id="selection-panel">
-                    <div class="panel-header">Selection</div>
-                    <div class="panel-body empty">No point selected</div>
+                      </div>
+                      <div id="color-fields"></div>
+                    </div>
+                  </footer>
                 </div>
-                <div id="info-panel" style="display: none;">
-                    <div class="panel-header">Point Cloud Info</div>
-                    <div class="panel-body"></div>
-                </div>
-                <div id="loading-status" role="status" aria-live="polite">Loading point cloud…</div>
                 <script nonce="${nonce}" src="${scriptUri}" type="module"></script>
             </body>
             </html>`;
