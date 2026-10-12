@@ -1,4 +1,4 @@
-import { parseFast } from "./pcd-format/pcd-format.js";
+import { sourcePointIndex } from "./pcd-format/pcd-format.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -137,6 +137,8 @@ function addTooltip(element, desc, position) {
 }
 
 let cloud = null;
+let fullResolution = false;
+let resolutionButton = null;
 let colorField = -1;
 let fileSize = 0;
 let gridToggleBtn = null;
@@ -200,8 +202,9 @@ function refreshInfoPanel() {
         }
 
         // Points count
-        const pointCount = h.width * h.height;
+        const pointCount = h.points;
         infoItems.push({ field: 'Points', value: pointCount.toLocaleString() });
+        infoItems.push({ field: 'Displayed Points', value: cloud.points.toLocaleString() });
 
         // Width x Height
         infoItems.push({ field: 'Width × Height', value: `${h.width} × ${h.height}` });
@@ -249,18 +252,8 @@ function updateGridAndAxesSize(positions) {
     const count = positions.count;
     if (count === 0) return;
 
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-
-    for (let i = 0; i < count; i++) {
-        const x = positions.getX(i);
-        const y = positions.getY(i);
-        const z = positions.getZ(i);
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-    }
+    const [minX, minY, minZ] = cloud.bounds.min;
+    const [maxX, maxY, maxZ] = cloud.bounds.max;
 
     const rangeX = maxX - minX;
     const rangeY = maxY - minY;
@@ -275,6 +268,9 @@ function updateGridAndAxesSize(positions) {
 
     // Replace grid
     pointcloud.remove(gridHelper);
+    gridHelper.geometry.dispose();
+    if (Array.isArray(gridHelper.material)) gridHelper.material.forEach(m => m.dispose());
+    else gridHelper.material.dispose();
     gridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0x555555);
     gridHelper.rotation.x = Math.PI / 2;
     if (Array.isArray(gridHelper.material)) {
@@ -288,6 +284,8 @@ function updateGridAndAxesSize(positions) {
 
     // Replace axes
     pointcloud.remove(axesHelper);
+    axesHelper.geometry.dispose();
+    axesHelper.material.dispose();
     axesHelper = new THREE.AxesHelper(gridSize / 2);
     axesHelper.visible = showAxes;
     pointcloud.add(axesHelper);
@@ -297,45 +295,21 @@ function updateGridAndAxesSize(positions) {
 
 function generateCloudPosition(cloud) {
     if (cloud == null) return null;
-    const size = cloud.header.width * cloud.header.height;
-    const xData = cloud.fieldData['x'];
-    const yData = cloud.fieldData['y'];
-    const zData = cloud.fieldData['z'];
-
-    const vertices = new Float32Array(size * 3);
-    let sum_x = 0, sum_y = 0, sum_z = 0;
-
-    for (let i = 0; i < size; i++) {
-        const x = xData ? xData[i] : 0;
-        const y = yData ? yData[i] : 0;
-        const z = zData ? zData[i] : 0;
-        vertices[i * 3 + 0] = x;
-        vertices[i * 3 + 1] = y;
-        vertices[i * 3 + 2] = z;
-        sum_x += x;
-        sum_y += y;
-        sum_z += z;
-    }
-    cloudCenter.x = -sum_x / size;
-    cloudCenter.y = sum_z / size;
-    cloudCenter.z = sum_y / size;
-    return new THREE.BufferAttribute(vertices, 3);
+    cloudCenter.set(-cloud.center[0], cloud.center[2], cloud.center[1]);
+    return new THREE.BufferAttribute(cloud.positions, 3);
 }
 
-function generateCloudColorByConstant(cloud, constant) {
-    if (cloud == null) return null;
-    let size = cloud.header.width * cloud.header.height;
-    let colors = new Float32Array(size * 3);
-    for (let i = 0; i < size; i++) {
-        colors[i * 3 + 0] = constant[0] / 255.0;
-        colors[i * 3 + 1] = constant[1] / 255.0;
-        colors[i * 3 + 2] = constant[2] / 255.0;
-    }
-    return new THREE.BufferAttribute(colors, 3);
+function setConstantCloudColor(constant) {
+    material.vertexColors = false;
+    material.color.setRGB(constant[0] / 255, constant[1] / 255, constant[2] / 255);
+    material.needsUpdate = true;
 }
 
 function generateCloudColorByField(cloud, colorField) {
     if (cloud == null) return null;
+    material.vertexColors = true;
+    material.color.setRGB(1, 1, 1);
+    material.needsUpdate = true;
     const fieldName = cloud.header.fields[colorField];
     if (fieldName === 'rgb') {
         return generateCloudColorByRGB(cloud, colorField);
@@ -343,18 +317,19 @@ function generateCloudColorByField(cloud, colorField) {
     if (fieldName === 'rgba') {
         return generateCloudColorByRGBA(cloud, colorField);
     }
-    const size = cloud.header.width * cloud.header.height;
+    const size = cloud.points;
     if (colorField < 0) colorField = 0;
     if (colorField >= cloud.header.fields.length) colorField = cloud.header.fields.length - 1;
 
     const fieldData = cloud.fieldData[cloud.header.fields[colorField]];
+    const fieldCount = cloud.header.count[colorField];
     if (!fieldData) return null;
 
     // Single pass to find min/max using TypedArray
     let max = -Infinity;
     let min = Infinity;
     for (let i = 0; i < size; i++) {
-        const v = fieldData[i];
+        const v = fieldData[i * fieldCount];
         if (v > max) max = v;
         if (v < min) min = v;
     }
@@ -365,7 +340,8 @@ function generateCloudColorByField(cloud, colorField) {
     const invRange = range !== 0 ? 255 / range : 0;
 
     for (let i = 0; i < size; i++) {
-        let index = Math.floor((fieldData[i] - min) * invRange);
+        let index = Math.floor((fieldData[i * fieldCount] - min) * invRange);
+        if (!Number.isFinite(index)) index = 0;
         if (index < 0) index = 0;
         if (index > 255) index = 255;
         // Use pre-computed LUT instead of getImageData
@@ -377,7 +353,7 @@ function generateCloudColorByField(cloud, colorField) {
 }
 
 function generateCloudColorByRGB(cloud, colorField) {
-    const size = cloud.header.width * cloud.header.height;
+    const size = cloud.points;
     const colors = new Float32Array(size * 3);
     const fieldName = cloud.header.fields[colorField];
     const fieldData = cloud.fieldData[fieldName];
@@ -393,7 +369,7 @@ function generateCloudColorByRGB(cloud, colorField) {
 }
 
 function generateCloudColorByRGBA(cloud, colorField) {
-    const size = cloud.header.width * cloud.header.height;
+    const size = cloud.points;
     const colors = new Float32Array(size * 4);
     const fieldName = cloud.header.fields[colorField];
     const fieldData = cloud.fieldData[fieldName];
@@ -425,12 +401,14 @@ function formatScalar(value) {
 
 function refreshSelectionPanel() {
     if (selectionPanelHeader) {
-        selectionPanelHeader.textContent = selectedPointIndex === null ? 'Selection' : `Selection (#${selectedPointIndex})`;
+        const sourceIndex = selectedPointIndex === null || !cloud ? null :
+            sourcePointIndex(selectedPointIndex, cloud.sourcePoints, cloud.points);
+        selectionPanelHeader.textContent = sourceIndex === null ? 'Selection' : `Selection (#${sourceIndex})`;
     }
     if (!selectionPanelBody) {
         return;
     }
-    const size = cloud ? cloud.header.width * cloud.header.height : 0;
+    const size = cloud ? cloud.points : 0;
     if (selectedPointIndex === null || !cloud || !cloud.fieldData || selectedPointIndex >= size) {
         selectionPanelBody.classList.add('empty');
         selectionPanelBody.textContent = 'No point selected';
@@ -469,7 +447,7 @@ function selectPoint(index) {
     if (!cloud || !geometry.attributes.position) {
         return;
     }
-    const size = cloud.header.width * cloud.header.height;
+    const size = cloud.points;
     if (!cloud.fieldData || index >= size) {
         clearSelection();
         return;
@@ -575,6 +553,7 @@ for (let node of document.getElementById('colormap-list').children) {
 
 window.addEventListener('keypress', (event) => {
     if (event.key.charCodeAt(0) >= '0'.charCodeAt(0) && event.key.charCodeAt(0) <= '9'.charCodeAt(0)) {
+        if (!cloud) return;
         useDefault = false;
         let key = (parseInt(event.key) + 9) % 10
         if (key < cloud.header.fields.length) {
@@ -599,7 +578,7 @@ window.addEventListener('keypress', (event) => {
     }
     if (event.key == '`') {
         useDefault = true;
-        geometry.setAttribute('color', generateCloudColorByConstant(cloud, defaultColor));
+        setConstantCloudColor(defaultColor);
         render();
         document.querySelectorAll('#color-fields>div').forEach((node) => { node.className = ''; });
     }
@@ -695,7 +674,7 @@ let menuContent = document.getElementById('menu-list');
         let position = camera.position.clone().sub(controls.target).add(cloudCenter);
         controls.target0.copy(target);
         controls.target.copy(target);
-        controls.position0.copy(orbitList[orbitAxis].position.clone().add(center));
+        controls.position0.copy(orbitList[orbitAxis].position.clone().add(cloudCenter));
         camera.position.copy(position);
         controls.update();
         render();
@@ -728,6 +707,18 @@ let menuContent = document.getElementById('menu-list');
     });
     addTooltip(infoToggle, 'show point cloud info', 'bottom');
     menuContent.appendChild(infoToggle);
+
+    resolutionButton = document.createElement('button');
+    resolutionButton.type = 'button';
+    resolutionButton.textContent = 'Full';
+    resolutionButton.disabled = true;
+    resolutionButton.addEventListener('click', () => {
+        fullResolution = !fullResolution;
+        resolutionButton.textContent = fullResolution ? 'Preview' : 'Full';
+        resolutionButton.disabled = true;
+        vscode.postMessage({ type: 'reload', fullResolution });
+    });
+    menuContent.appendChild(resolutionButton);
 
     gridToggleBtn = document.createElement('div');
     gridToggleBtn.innerText = 'Grid';
@@ -818,7 +809,7 @@ function updateBackground() {
     document.body.style.setProperty('--color', `${front[0]}, ${front[1]}, ${front[2]}`);
     document.body.style.setProperty('--highlight', `${255 - front[0]}, ${255 - front[1]}, ${255 - front[2]}`);
     if (useDefault && cloud !== null) {
-        geometry.setAttribute('color', generateCloudColorByConstant(cloud, front));
+        setConstantCloudColor(front);
     }
     render();
 }
@@ -829,24 +820,51 @@ updateSelectionMarkerSize();
 render();
 animate();
 
-window.addEventListener('message', async e => {
-    const { type, body } = e.data;
-    if (body.value == null) return;
-    if (type == 'background') {
-        background = body.value[0];
-        defaultColor = body.value[1];
-        updateBackground();
-    }
-    if (type != 'init') {
-        return;
-    }
-    fileSize = body.fileSize || 0;
-    cloud = parseFast(body.value.buffer);
+const loadingStatus = document.getElementById('loading-status');
+let activeWorker = null;
+let workerBlobUrl = null;
+let loadId = 0;
+
+function stopWorker() {
+    if (activeWorker) activeWorker.terminate();
+    if (workerBlobUrl) URL.revokeObjectURL(workerBlobUrl);
+    activeWorker = null;
+    workerBlobUrl = null;
+}
+
+function showLoadError(message) {
+    loadingStatus.hidden = false;
+    loadingStatus.textContent = `Unable to load point cloud: ${message}`;
+    loadingStatus.setAttribute('role', 'alert');
+}
+
+function installCloud(result) {
+    cloud = result;
     clearSelection();
+    geometry.dispose();
+    geometry = new THREE.BufferGeometry();
+    pointcloud.geometry = geometry;
     const posAttr = generateCloudPosition(cloud);
     geometry.setAttribute('position', posAttr);
-    geometry.setAttribute('color', generateCloudColorByConstant(cloud, defaultColor));
+    setConstantCloudColor(defaultColor);
+    const bounds = cloud.bounds;
+    const center = new THREE.Vector3().fromArray(bounds.min).add(new THREE.Vector3().fromArray(bounds.max)).multiplyScalar(0.5);
+    const radius = Math.max(new THREE.Vector3().fromArray(bounds.max).distanceTo(center), 0.1);
+    geometry.boundingSphere = new THREE.Sphere(center, radius);
+    const target = center.clone().applyQuaternion(pointcloud.quaternion);
+    controls.target.copy(target);
+    camera.position.copy(target).add(new THREE.Vector3(1, 0.8, 1).normalize().multiplyScalar(radius / Math.sin(camera.fov * Math.PI / 360) * 1.2));
+    camera.updateProjectionMatrix();
+    controls.update();
     updateGridAndAxesSize(posAttr);
+    colorField = -1;
+    useDefault = true;
+    refreshInfoPanel();
+    loadingStatus.setAttribute('role', 'status');
+    resolutionButton.disabled = false;
+    loadingStatus.hidden = !fullResolution && cloud.points === cloud.sourcePoints;
+    loadingStatus.textContent = fullResolution ? `Full resolution: ${cloud.points.toLocaleString()} points` :
+        `Preview: ${cloud.points.toLocaleString()} / ${cloud.sourcePoints.toLocaleString()} points (sampled)`;
     let content = document.getElementById('color-fields');
     content.innerHTML = '';
     for (let i = 0; i < cloud.header.fields.length; i++) {
@@ -858,18 +876,74 @@ window.addEventListener('message', async e => {
         key.className = 'key';
         key.innerText = (i + 1).toString();
         let name = document.createElement('div');
-        let nameArr = cloud.header.fields[i].split('_').map((v) => v[0].toLowerCase());
+        let nameArr = cloud.header.fields[i].split('_').filter(Boolean).map(v => v[0].toLowerCase());
         nameArr[0] = nameArr[0].toUpperCase();
         name.innerText = nameArr.join('');
-        if (cloud.header.fields[i] === 'rgb' || cloud.header.fields[i] === 'rgba') {
-            name.innerText = cloud.header.fields[i].toUpperCase();
-        }
+        if (cloud.header.fields[i] === 'rgb' || cloud.header.fields[i] === 'rgba') name.innerText = cloud.header.fields[i].toUpperCase();
         item.appendChild(key);
         item.appendChild(name);
         content.appendChild(item);
     }
     render();
-    window.focus();
+}
+
+window.addEventListener('pagehide', stopWorker);
+window.addEventListener('message', async e => {
+    const { type, body } = e.data || {};
+    if (!body || body.value == null) return;
+    if (type == 'background') {
+        background = body.value[0];
+        defaultColor = body.value[1];
+        updateBackground();
+    }
+    if (type != 'init') {
+        return;
+    }
+    fileSize = body.fileSize || 0;
+    fullResolution = body.maxPoints === 0;
+    resolutionButton.textContent = fullResolution ? 'Preview' : 'Full';
+    resolutionButton.disabled = false;
+    const currentLoad = ++loadId;
+    stopWorker();
+    loadingStatus.hidden = false;
+    loadingStatus.textContent = 'Loading point cloud…';
+    try {
+        // VS Code webviews require a self-contained worker loaded from a blob URI.
+        const response = await fetch(document.body.dataset.workerUri);
+        if (!response.ok) throw new Error(`Worker could not be loaded (${response.status})`);
+        const blob = await response.blob();
+        if (currentLoad !== loadId) return;
+        workerBlobUrl = URL.createObjectURL(blob);
+        const worker = new Worker(workerBlobUrl);
+        activeWorker = worker;
+        worker.onmessage = ({ data }) => {
+            if (currentLoad !== loadId) return;
+            if (data.type === 'progress') {
+                loadingStatus.textContent = `Loading point cloud… ${Math.round(data.value * 100)}%`;
+            } else {
+                stopWorker();
+                if (data.type === 'complete') {
+                    try { installCloud(data.cloud); }
+                    catch (error) { showLoadError(error.message || String(error)); }
+                } else showLoadError(data.message);
+            }
+        };
+        worker.onerror = event => {
+            if (currentLoad !== loadId) return;
+            stopWorker();
+            showLoadError(event.message || 'Background parser failed');
+        };
+        const value = body.value;
+        const buffer = value instanceof ArrayBuffer ? value :
+            value.byteOffset === 0 && value.byteLength === value.buffer.byteLength ? value.buffer :
+                value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        worker.postMessage({ buffer, maxPoints: body.maxPoints === 0 ? 0 : (body.maxPoints || 1000000) }, [buffer]);
+    } catch (error) {
+        if (currentLoad === loadId) {
+            stopWorker();
+            showLoadError(error.message || String(error));
+        }
+    }
 });
 
 const vscode = acquireVsCodeApi();

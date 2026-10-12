@@ -2,7 +2,7 @@
   "name": "wind-pcd-viewer",
   "displayName": "wind-pcd-viewer",
   "description": "an extension to preview pcd file in vscode.",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "engines": {
     "vscode": "^1.57.0"
   },
@@ -41,6 +41,13 @@
       "title": "PCD Viewer",
       "type": "object",
       "properties": {
+        "pcdViewer.maxPreviewPoints": {
+          "type": "integer",
+          "default": 1000000,
+          "minimum": 0,
+          "maximum": 5000000,
+          "description": "Maximum displayed points, or 0 for full resolution. Sampled previews use a 64 MiB field-data budget; full resolution bypasses preview limits. The original file stays unchanged. Use the Full/Preview button or reopen after changing this setting."
+        },
         "pcdViewer.backgroundColor": {
           "type": "string",
           "default": "#000000",
@@ -52,11 +59,12 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "tsc -p ./ && esbuild static/js/pcd-worker-source.js --bundle --platform=browser --target=es2020 --outfile=out/pcd-worker.js",
+    "watch": "node scripts/watch.cjs",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node --test tests/*.test.mjs",
+    "test:vscode": "node ./out/test/runTest.js"
   },
   "devDependencies": {
     "@types/glob": "^7.1.3",
@@ -65,6 +73,8 @@
     "@types/vscode": "^1.57.0",
     "@typescript-eslint/eslint-plugin": "^4.14.1",
     "@typescript-eslint/parser": "^4.14.1",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
     "eslint": "^7.19.0",
     "glob": "^7.1.6",
     "mocha": "^8.2.1",
