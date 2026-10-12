@@ -4,6 +4,21 @@ All notable changes to the "pcd-viewer" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.13] - 2026-10-12
+
+### Fixed
+
+- Reuse scalar and packed color buffers; map scalar colormaps on the GPU and find finite ranges in the background parser. Repeated coloring no longer leaves replaced WebGL buffers allocated.
+- Make nearest-point picking cancellable and split it into short UI tasks without allocating or sorting every intersection.
+- Keep toolbars, Info, Selection, status and field controls in a responsive layout with bounded scrolling and readable panel headings.
+- Fit all six axis presets and origin/center orbit targets to finite cloud bounds and viewport aspect, instead of resetting the camera to five units.
+- Render on demand, coalesce redraws, pause hidden editors, and restrict camera input to the canvas. Release previous cloud buffers before reloading and dispose renderer resources on close.
+- Handle underscore-only field labels without interrupting cloud installation, and keep selection markers visible after selecting a different point.
+
+Full resolution and `pcdViewer.maxPreviewPoints = 0` remain supported. These changes do not sample or modify the source PCD.
+
+Closes #13, #14, #15, #16, #17 and #18.
+
 ## [0.0.12] - 2026-10-12
 
 ### Fixed
