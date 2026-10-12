@@ -82,9 +82,7 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
             PcdEditorProvider.viewType,
             new PcdEditorProvider(context),
             {
-                // For this demo extension, we enable `retainContextWhenHidden` which keeps the 
-                // webview alive even when it is not visible. You should avoid using this setting
-                // unless is absolutely required as it does have memory overhead.
+                // Retain expensive full-cloud buffers; visibility messages suspend rendering.
                 webviewOptions: {
                     retainContextWhenHidden: true,
                 },
@@ -146,11 +144,18 @@ export class PcdEditorProvider implements vscode.CustomEditorProvider {
         };
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
+        const sendVisibility = () => this.postMessage(webviewPanel, 'visibility', {
+            visible: webviewPanel.visible,
+        });
+        const visibilityListener = webviewPanel.onDidChangeViewState(sendVisibility);
+        webviewPanel.onDidDispose(() => visibilityListener.dispose());
+
         // webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e));
 
         // Wait for the webview to be properly ready before we init
         webviewPanel.webview.onDidReceiveMessage(e => {
             if (e.type === 'ready' || e.type === 'reload') {
+                sendVisibility();
                 const configuredMax = vscode.workspace.getConfiguration('pcdViewer').get<number>('maxPreviewPoints', 1000000);
                 const maxPoints = e.type === 'reload' && typeof e.fullResolution === 'boolean'
                     ? (e.fullResolution ? 0 : (configuredMax || 1000000)) : configuredMax;

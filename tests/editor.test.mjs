@@ -42,7 +42,10 @@ test('webview initialization sends exact file bytes, preview settings and a pack
     const document = await provider.openCustomDocument(uri, {}, {});
     const messages = [];
     let receive;
+    let visibilityChanged;
     const panel = {
+        visible: true,
+        onDidChangeViewState: listener => { visibilityChanged = listener; return { dispose() {} }; },
         onDidDispose: () => ({ dispose() {} }),
         webview: {
             asWebviewUri: uri => uri,
@@ -64,4 +67,10 @@ test('webview initialization sends exact file bytes, preview settings and a pack
     assert.equal(messages.at(-1).body.maxPoints, 0);
     receive({ type: 'reload', fullResolution: false });
     assert.equal(messages.at(-1).body.maxPoints, 250000);
+    panel.visible = false;
+    visibilityChanged();
+    assert.deepEqual(messages.at(-1), { type: 'visibility', body: { visible: false } });
+    panel.visible = true;
+    visibilityChanged();
+    assert.equal(messages.at(-1).body.visible, true);
 });

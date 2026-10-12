@@ -2,6 +2,7 @@ import { sourcePointIndex } from "./pcd-format/pcd-format.js";
 import { fillScalarColors, fillPackedColors } from "./cloud-color.js";
 import { fitCloudView } from "./view-math.js";
 import { pickNearestPoint } from "./point-picking.js";
+import { createFrameScheduler } from "./frame-scheduler.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 200000);
@@ -72,7 +73,7 @@ let cloudCenter = new THREE.Vector3();
 
 camera.position.y = 5;
 
-let controls = new THREE.OrbitControls(camera);
+let controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.rotateSpeed = 0.5;
 controls.zoomSpeed = 2.0;
 controls.panSpeed = 0.5;
@@ -80,17 +81,22 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.3;
 controls.addEventListener('change', () => { ++pickRequest; render(); });
 
-function render() {
+let viewerVisible = true;
+const frameScheduler = createFrameScheduler(() => {
+    controls.update();
     renderer.render(scene, camera);
+}, { isVisible: () => viewerVisible && !document.hidden });
+
+function render() {
+    frameScheduler.invalidate();
 }
 
-function animate() {
-    requestAnimationFrame(animate);
-    controls.update();
-}
+window.addEventListener('visibilitychange', () => {
+    if (document.hidden) frameScheduler.suspend();
+    else render();
+});
 
 window.addEventListener('resize', () => {
-    console.log('resize');
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -827,7 +833,6 @@ refreshSelectionPanel();
 updateSelectionMarkerSize();
 
 render();
-animate();
 
 const loadingStatus = document.getElementById('loading-status');
 let activeWorker = null;
@@ -894,9 +899,31 @@ function installCloud(result) {
     render();
 }
 
-window.addEventListener('pagehide', stopWorker);
+window.addEventListener('pagehide', () => {
+    ++loadId; ++colorRequest; ++pickRequest;
+    stopWorker();
+    frameScheduler.dispose();
+    controls.dispose();
+    geometry.dispose();
+    material.dispose();
+    selectedMarkerGeometry.dispose();
+    selectedMarkerMaterial.dispose();
+    gridHelper.geometry.dispose();
+    if (Array.isArray(gridHelper.material)) gridHelper.material.forEach(item => item.dispose());
+    else gridHelper.material.dispose();
+    axesHelper.geometry.dispose();
+    axesHelper.material.dispose();
+    colormapTexture.dispose();
+    renderer.dispose();
+});
 window.addEventListener('message', async e => {
     const { type, body } = e.data || {};
+    if (type === 'visibility') {
+        viewerVisible = body?.visible !== false;
+        if (viewerVisible) render();
+        else { frameScheduler.suspend(); ++pickRequest; }
+        return;
+    }
     if (!body || body.value == null) return;
     if (type == 'background') {
         background = body.value[0];
@@ -906,6 +933,17 @@ window.addEventListener('message', async e => {
     if (type != 'init') {
         return;
     }
+    // Release the previous cloud before parsing its replacement to reduce peak memory.
+    ++colorRequest; ++pickRequest;
+    cloud = null;
+    geometry.dispose();
+    geometry = new THREE.BufferGeometry();
+    pointcloud.geometry = geometry;
+    scalarAttribute = packedAttribute = null;
+    document.getElementById('color-fields').textContent = '';
+    clearSelection();
+    refreshInfoPanel();
+    render();
     fileSize = body.fileSize || 0;
     fullResolution = body.maxPoints === 0;
     resolutionButton.textContent = fullResolution ? 'Preview' : 'Full';
